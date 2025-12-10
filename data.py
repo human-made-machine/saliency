@@ -461,8 +461,8 @@ class TEST:
 
 
 def get_dataset_iterator(phase, dataset, data_path):
-    """Entry point to make an initializable dataset iterator for either
-       training or testing a model by calling the respective dataset class.
+    """Entry point to get a dataset for either training or testing a model
+       by calling the respective dataset class.
 
     Args:
         phase (str): Holds the current phase, which can be "train" or "test".
@@ -472,8 +472,8 @@ def get_dataset_iterator(phase, dataset, data_path):
                          data instances are stored.
 
     Returns:
-        iterator: An initializable dataset iterator holding the relevant data.
-        initializer: An operation required to initialize the correct iterator.
+        For training: tuple of (train_dataset, valid_dataset)
+        For testing: test_dataset
     """
 
     if phase == "train":
@@ -483,26 +483,13 @@ def get_dataset_iterator(phase, dataset, data_path):
         dataset_class = getattr(current_module, class_name)(data_path)
         train_set, valid_set = dataset_class.load_data()
 
-        iterator = tf.data.Iterator.from_structure(train_set.output_types,
-                                                   train_set.output_shapes)
-        next_element = iterator.get_next()
-
-        train_init_op = iterator.make_initializer(train_set)
-        valid_init_op = iterator.make_initializer(valid_set)
-
-        return next_element, train_init_op, valid_init_op
+        return train_set, valid_set
 
     if phase == "test":
         test_class = TEST(dataset, data_path)
         test_set = test_class.load_data()
 
-        iterator = tf.data.Iterator.from_structure(test_set.output_types,
-                                                   test_set.output_shapes)
-        next_element = iterator.get_next()
-
-        init_op = iterator.make_initializer(test_set)
-
-        return next_element, init_op
+        return test_set
 
 
 def postprocess_saliency_map(saliency_map, target_size):
@@ -520,7 +507,7 @@ def postprocess_saliency_map(saliency_map, target_size):
         tensor, str: A tensor of the saliency map encoded as a jpeg file.
     """
 
-    saliency_map *= 255.0
+    saliency_map = saliency_map * 255.0
 
     saliency_map = _resize_image(saliency_map, target_size, True)
     saliency_map = _crop_image(saliency_map, target_size)
@@ -528,7 +515,7 @@ def postprocess_saliency_map(saliency_map, target_size):
     saliency_map = tf.round(saliency_map)
     saliency_map = tf.cast(saliency_map, tf.uint8)
 
-    saliency_map_jpeg = tf.image.encode_jpeg(saliency_map, "grayscale", 100)
+    saliency_map_jpeg = tf.io.encode_jpeg(saliency_map, quality=100)
 
     return saliency_map_jpeg
 
@@ -553,15 +540,18 @@ def _fetch_dataset(files, target_size, shuffle, online=False):
     dataset = tf.data.Dataset.from_tensor_slices(files)
 
     if shuffle:
-        dataset = dataset.shuffle(len(files[0]))
+        if isinstance(files, tuple):
+            dataset = dataset.shuffle(len(files[0]))
+        else:
+            dataset = dataset.shuffle(len(files))
 
     dataset = dataset.map(lambda *files: _parse_function(files, target_size),
-                          num_parallel_calls=tf.data.experimental.AUTOTUNE)
+                          num_parallel_calls=tf.data.AUTOTUNE)
 
     batch_size = 1 if online else config.PARAMS["batch_size"]
 
     dataset = dataset.batch(batch_size)
-    dataset = dataset.prefetch(5)
+    dataset = dataset.prefetch(tf.data.AUTOTUNE)
 
     return dataset
 
@@ -586,14 +576,14 @@ def _parse_function(files, target_size):
     image_list = []
 
     for count, filename in enumerate(files):
-        image_str = tf.read_file(filename)
+        image_str = tf.io.read_file(filename)
         channels = 3 if count == 0 else 1
 
-        image = tf.cond(tf.image.is_jpeg(image_str),
-                        lambda: tf.image.decode_jpeg(image_str,
-                                                     channels=channels),
-                        lambda: tf.image.decode_png(image_str,
-                                                    channels=channels))
+        image = tf.cond(tf.io.is_jpeg(image_str),
+                        lambda: tf.io.decode_jpeg(image_str,
+                                                  channels=channels),
+                        lambda: tf.io.decode_png(image_str,
+                                                 channels=channels))
         original_size = tf.shape(image)[:2]
 
         image = _resize_image(image, target_size)
@@ -604,7 +594,7 @@ def _parse_function(files, target_size):
     image_list.append(original_size)
     image_list.append(files)
 
-    return image_list
+    return tuple(image_list)
 
 
 def _resize_image(image, target_size, overfull=False):
@@ -623,7 +613,7 @@ def _resize_image(image, target_size, overfull=False):
                                    padding or cropping. Defaults to False.
 
     Returns:
-        tensor, float32: 4D tensor that holds the values of the resized image.
+        tensor, float32: 3D tensor that holds the values of the resized image.
 
     .. seealso:: The reasoning for using either area or bicubic interpolation
                  methods is based on the OpenCV documentation recommendations.
@@ -632,29 +622,28 @@ def _resize_image(image, target_size, overfull=False):
 
     current_size = tf.shape(image)[:2]
 
-    height_ratio = target_size[0] / current_size[0]
-    width_ratio = target_size[1] / current_size[1]
+    height_ratio = tf.cast(target_size[0], tf.float32) / tf.cast(current_size[0], tf.float32)
+    width_ratio = tf.cast(target_size[1], tf.float32) / tf.cast(current_size[1], tf.float32)
 
     if overfull:
         target_ratio = tf.maximum(height_ratio, width_ratio)
     else:
         target_ratio = tf.minimum(height_ratio, width_ratio)
 
-    target_size = tf.cast(current_size, tf.float64) * target_ratio
-    target_size = tf.cast(tf.round(target_size), tf.int32)
+    new_size = tf.cast(tf.cast(current_size, tf.float32) * target_ratio, tf.int32)
 
-    shrinking = tf.cond(tf.logical_or(current_size[0] > target_size[0],
-                                      current_size[1] > target_size[1]),
-                        lambda: tf.constant(True),
-                        lambda: tf.constant(False))
+    shrinking = tf.logical_or(current_size[0] > new_size[0],
+                              current_size[1] > new_size[1])
 
+    image = tf.cast(image, tf.float32)
     image = tf.expand_dims(image, 0)
 
-    image = tf.cond(shrinking,
-                    lambda: tf.image.resize_area(image, target_size,
-                                                 align_corners=True),
-                    lambda: tf.image.resize_bicubic(image, target_size,
-                                                    align_corners=True))
+    # Use area method for shrinking, bicubic for enlarging
+    image = tf.cond(
+        shrinking,
+        lambda: tf.image.resize(image, new_size, method="area"),
+        lambda: tf.image.resize(image, new_size, method="bicubic")
+    )
 
     image = tf.clip_by_value(image[0], 0.0, 255.0)
 
@@ -680,13 +669,13 @@ def _pad_image(image, target_size):
                                  lambda: tf.constant(126.0),
                                  lambda: tf.constant(0.0))
 
-    pad_vertical = (target_size[0] - current_size[0]) / 2
-    pad_horizontal = (target_size[1] - current_size[1]) / 2
+    pad_vertical = tf.cast(target_size[0] - current_size[0], tf.float32) / 2
+    pad_horizontal = tf.cast(target_size[1] - current_size[1], tf.float32) / 2
 
-    pad_top = tf.floor(pad_vertical)
-    pad_bottom = tf.ceil(pad_vertical)
-    pad_left = tf.floor(pad_horizontal)
-    pad_right = tf.ceil(pad_horizontal)
+    pad_top = tf.cast(tf.floor(pad_vertical), tf.int32)
+    pad_bottom = tf.cast(tf.ceil(pad_vertical), tf.int32)
+    pad_left = tf.cast(tf.floor(pad_horizontal), tf.int32)
+    pad_right = tf.cast(tf.ceil(pad_horizontal), tf.int32)
 
     padding = [[pad_top, pad_bottom], [pad_left, pad_right], [0, 0]]
     image = tf.pad(image, padding, constant_values=pad_constant_value)
@@ -711,8 +700,8 @@ def _crop_image(image, target_size):
 
     current_size = tf.shape(image)[:2]
 
-    crop_vertical = (current_size[0] - target_size[0]) / 2
-    crop_horizontal = (current_size[1] - target_size[1]) / 2
+    crop_vertical = tf.cast(current_size[0] - target_size[0], tf.float32) / 2
+    crop_horizontal = tf.cast(current_size[1] - target_size[1], tf.float32) / 2
 
     crop_top = tf.cast(tf.floor(crop_vertical), tf.int32)
     crop_left = tf.cast(tf.floor(crop_horizontal), tf.int32)

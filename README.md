@@ -14,16 +14,37 @@ Our results are available on the original [MIT saliency benchmark](http://salien
 
 ## Requirements
 
-[![](https://img.shields.io/badge/tensorflow--gpu-v1.13.1-orange.svg?style=flat-square)](https://www.tensorflow.org/)
+[![](https://img.shields.io/badge/tensorflow-v2.15+-orange.svg?style=flat-square)](https://www.tensorflow.org/)
+[![](https://img.shields.io/badge/python-3.10+-blue.svg?style=flat-square)](https://www.python.org/)
 
-The code is based on **Python v3.6.8** and **TensorFlow v1.13.1** and is compatible with both Windows and Linux. We strongly recommend to use TensorFlow with GPU acceleration, especially when training the model. Nevertheless, a slower CPU version is officially supported. To install the required dependencies, use either `pip` or `conda`:
+The code requires **Python 3.10+** and **TensorFlow 2.15+** and is compatible with Windows, Linux, and macOS. We strongly recommend using TensorFlow with GPU acceleration, especially when training the model. Nevertheless, a slower CPU version is officially supported.
+
+### Installation with uv (recommended)
+
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/) and then run:
+
+```bash
+uv sync
 ```
-pip install -r requirements.txt
+
+For GPU support with CUDA:
+```bash
+uv sync --extra gpu
 ```
+
+### Running with uv
+
+```bash
+uv run python main.py train
+uv run python main.py test -d salicon -p data/
 ```
-conda env create -f requirements.yml
+
+### Alternative: pip installation
+
+If you prefer pip, you can install dependencies directly:
+```bash
+pip install -e .
 ```
-For newer GPUs, you may need to install [nvidia-tensorflow](https://github.com/NVIDIA/tensorflow) to successfully run the scripts (see issues [#25](https://github.com/alexanderkroner/saliency/issues/25) and [#26](https://github.com/alexanderkroner/saliency/issues/26)).
 
 ## Training
 

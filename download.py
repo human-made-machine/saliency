@@ -6,7 +6,7 @@ import gdown
 import h5py
 import numpy as np
 import requests
-from matplotlib.pyplot import imread, imsave
+from imageio.v3 import imread, imwrite
 from scipy.io import loadmat
 from scipy.ndimage import gaussian_filter
 
@@ -220,8 +220,12 @@ def download_dutomron(data_path):
 
                 saliency_map = gaussian_filter(fixations_map, 16)
 
-                imsave(saliency_path + file_name, saliency_map, cmap="gray")
-                imsave(fixations_path + file_name, fixations_map, cmap="gray")
+                # Normalize to 0-255 range for saving
+                saliency_map_normalized = (saliency_map / saliency_map.max() * 255).astype(np.uint8)
+                fixations_map_normalized = (fixations_map * 255).astype(np.uint8)
+
+                imwrite(saliency_path + file_name, saliency_map_normalized)
+                imwrite(fixations_path + file_name, fixations_map_normalized)
 
     os.remove(data_path + "tmp.zip")
 
@@ -301,7 +305,8 @@ def download_pascals(data_path):
         file_name = str(idx + 1) + ".png"
         file_path = fixations_path + file_name
 
-        imsave(file_path, fixations_map, cmap="gray")
+        fixations_map_normalized = (fixations_map * 255).astype(np.uint8)
+        imwrite(file_path, fixations_map_normalized)
 
     os.remove(data_path + "tmp.zip")
 
@@ -368,8 +373,12 @@ def download_osie(data_path):
 
                     saliency_map = gaussian_filter(fixations_map, 16)
 
-                    imsave(saliency_path + file_name, saliency_map, cmap="gray")
-                    imsave(fixations_path + file_name, fixations_map, cmap="gray")
+                    # Normalize to 0-255 range for saving
+                    saliency_map_normalized = (saliency_map / saliency_map.max() * 255).astype(np.uint8)
+                    fixations_map_normalized = (fixations_map * 255).astype(np.uint8)
+
+                    imwrite(saliency_path + file_name, saliency_map_normalized)
+                    imwrite(fixations_path + file_name, fixations_map_normalized)
 
     os.remove(data_path + "tmp.zip")
 
@@ -416,10 +425,16 @@ def download_fiwi(data_path):
                 loaded_zip = io.BytesIO(zip_ref.read(file))
 
                 fixations = imread(loaded_zip)
-                saliency = gaussian_filter(fixations, 30)
+                saliency = gaussian_filter(fixations.astype(float), 30)
 
-                imsave(saliency_path + file_name, saliency, cmap="gray")
-                imsave(fixations_path + file_name, fixations, cmap="gray")
+                # Normalize to 0-255 range for saving
+                if saliency.max() > 0:
+                    saliency_normalized = (saliency / saliency.max() * 255).astype(np.uint8)
+                else:
+                    saliency_normalized = saliency.astype(np.uint8)
+
+                imwrite(saliency_path + file_name, saliency_normalized)
+                imwrite(fixations_path + file_name, fixations)
 
     os.remove(data_path + "tmp.zip")
 
@@ -444,6 +459,11 @@ def download_pretrained_weights(data_path, key):
 
     os.makedirs(data_path, exist_ok=True)
 
+    # For VGG16 weights, we use tf.keras.applications instead of downloading
+    if key == "vgg16_weights":
+        print("done! (using tf.keras.applications.VGG16)", flush=True)
+        return
+
     ids = {
         "vgg16_hybrid": "1ff0va472Xs1bvidCwRlW3Ctf7Hbyyn7p",
         "model_salicon_cpu": "1Xy9C72pcA8DO4CY0rc6B7wsuE9L9DDZY",
@@ -461,6 +481,10 @@ def download_pretrained_weights(data_path, key):
         "model_fiwi_cpu": "19qj9nAjd5gVHLB71oRn_YfYDw5n4Uf2X",
         "model_fiwi_gpu": "12OpIMIi2IyDVaxkE2d37XO9uUsSYf1Ec"
     }
+
+    if key not in ids:
+        print(f"Warning: Unknown key '{key}', skipping download", flush=True)
+        return
 
     url = "https://drive.google.com/uc?id=" + ids[key] + "&export=download"
 
