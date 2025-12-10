@@ -2,9 +2,12 @@ import os
 import time
 from datetime import timedelta
 
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend for GCS compatibility
 import matplotlib.pyplot as plt
 import matplotlib.ticker as plticker
 import numpy as np
+import tensorflow as tf
 
 
 class History:
@@ -32,13 +35,15 @@ class History:
         self._get_prior_history()
 
     def _get_prior_history(self):
-        if os.path.isfile(self._path + "train_%s_%s.txt" % self._id):
-            with open(self._path + "train_%s_%s.txt" % self._id, "r") as file:
+        train_file = self._path + "train_%s_%s.txt" % self._id
+        if tf.io.gfile.exists(train_file):
+            with tf.io.gfile.GFile(train_file, "r") as file:
                 for line in file.readlines():
                     self.train_history.append(float(line))
 
-        if os.path.isfile(self._path + "valid_%s_%s.txt" % self._id):
-            with open(self._path + "valid_%s_%s.txt" % self._id, "r") as file:
+        valid_file = self._path + "valid_%s_%s.txt" % self._id
+        if tf.io.gfile.exists(valid_file):
+            with tf.io.gfile.GFile(valid_file, "r") as file:
                 for line in file.readlines():
                     self.valid_history.append(float(line))
 
@@ -73,12 +78,14 @@ class History:
         self.train_history.append(mean_train_loss)
         self.valid_history.append(mean_valid_loss)
 
-        os.makedirs(self._path, exist_ok=True)
+        tf.io.gfile.makedirs(self._path)
 
-        with open(self._path + "train_%s_%s.txt" % self._id, "a") as file:
+        train_file = self._path + "train_%s_%s.txt" % self._id
+        with tf.io.gfile.GFile(train_file, "a") as file:
             file.write("%f\n" % self.train_history[-1])
 
-        with open(self._path + "valid_%s_%s.txt" % self._id, "a") as file:
+        valid_file = self._path + "valid_%s_%s.txt" % self._id
+        with tf.io.gfile.GFile(valid_file, "a") as file:
             file.write("%f\n" % self.valid_history[-1])
 
         if len(self.train_history) > 1:
@@ -96,7 +103,14 @@ class History:
             locations = plticker.MultipleLocator(base=1.0)
             axes.xaxis.set_major_locator(locations)
 
-            plt.savefig(self._path + "curve_%s_%s.png" % self._id)
+            # Save plot to GCS or local filesystem
+            import io
+            buf = io.BytesIO()
+            plt.savefig(buf, format='png')
+            buf.seek(0)
+            curve_file = self._path + "curve_%s_%s.png" % self._id
+            with tf.io.gfile.GFile(curve_file, "wb") as file:
+                file.write(buf.read())
             plt.close()
 
 

@@ -48,7 +48,8 @@ class MSINET(tf.keras.Model):
             self._data_format = "channels_first"
             self._channel_axis = 1
             self._dims_axis = (2, 3)
-        elif config.PARAMS["device"] == "cpu":
+        elif config.PARAMS["device"] in ("cpu", "tpu"):
+            # TPU requires channels_last format (same as CPU)
             self._data_format = "channels_last"
             self._channel_axis = 3
             self._dims_axis = (1, 2)
@@ -280,15 +281,15 @@ class MSINET(tf.keras.Model):
         return output
 
     def save_weights(self, dataset, path, device):
-        """Save model weights to disk.
+        """Save model weights to disk or GCS.
 
         Args:
             dataset (str): The dataset name.
-            path (str): The path used for saving the model.
-            device (str): Represents either "cpu" or "gpu".
+            path (str): The path used for saving the model (local or gs://).
+            device (str): Represents either "cpu", "gpu", or "tpu".
         """
 
-        os.makedirs(path, exist_ok=True)
+        tf.io.gfile.makedirs(path)
         weights_path = path + "model_%s_%s.weights.h5" % (dataset, device)
         super().save_weights(weights_path)
 
@@ -301,7 +302,7 @@ class MSINET(tf.keras.Model):
         Args:
             dataset (str): The dataset used for training.
             paths (dict, str): A dictionary with all path elements.
-            device (str): Represents either "cpu" or "gpu".
+            device (str): Represents either "cpu", "gpu", or "tpu".
         """
 
         model_name = "model_%s_%s" % (dataset, device)
@@ -309,12 +310,12 @@ class MSINET(tf.keras.Model):
 
         weights_ext = ".weights.h5"
 
-        if os.path.isfile(paths["latest"] + model_name + weights_ext):
+        if tf.io.gfile.exists(paths["latest"] + model_name + weights_ext):
             self.load_weights(paths["latest"] + model_name + weights_ext)
             print(">> Restored weights from latest checkpoint")
         elif dataset in ("mit1003", "cat2000", "dutomron",
                          "pascals", "osie", "fiwi", "fixationadd1000"):
-            if os.path.isfile(paths["best"] + salicon_name + weights_ext):
+            if tf.io.gfile.exists(paths["best"] + salicon_name + weights_ext):
                 self.load_weights(paths["best"] + salicon_name + weights_ext)
                 print(">> Restored weights from SALICON checkpoint")
             else:
@@ -322,10 +323,10 @@ class MSINET(tf.keras.Model):
         else:
             # Try to load VGG16 pretrained weights
             vgg16_weights_path = paths["weights"] + "vgg16_weights.h5"
-            if not os.path.isfile(vgg16_weights_path):
+            if not tf.io.gfile.exists(vgg16_weights_path):
                 download.download_pretrained_weights(paths["weights"], "vgg16_weights")
 
-            if os.path.isfile(vgg16_weights_path):
+            if tf.io.gfile.exists(vgg16_weights_path):
                 self._load_vgg16_weights(vgg16_weights_path)
                 print(">> Loaded VGG16 pretrained weights")
             else:
@@ -374,14 +375,14 @@ class MSINET(tf.keras.Model):
 
         Args:
             dataset (str): The dataset name.
-            path (str): The path used for saving the model.
-            device (str): Represents either "cpu" or "gpu".
+            path (str): The path used for saving the model (local or gs://).
+            device (str): Represents either "cpu", "gpu", or "tpu".
         """
 
         model_name = "model_%s_%s" % (dataset, device)
         model_path = path + model_name
 
-        os.makedirs(model_path, exist_ok=True)
+        tf.io.gfile.makedirs(model_path)
 
         # Create a concrete function for serving
         @tf.function(input_signature=[tf.TensorSpec(shape=[None, None, None, 3],

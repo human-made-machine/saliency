@@ -32,7 +32,13 @@ def define_paths(current_path, args):
     else:
         data_path = os.path.join(args.path, "")
 
-    results_path = current_path + "/results/"
+    # Use GCS output path if set, otherwise use local paths
+    if config.GCS_OUTPUT_PATH:
+        # GCS path format: gs://bucket/path/
+        results_path = config.GCS_OUTPUT_PATH.rstrip("/") + "/"
+    else:
+        results_path = current_path + "/results/"
+
     weights_path = current_path + "/weights/"
 
     history_path = results_path + "history/"

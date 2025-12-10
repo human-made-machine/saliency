@@ -64,6 +64,67 @@ Here, the `DATA` argument must be `salicon`, `mit1003`, `cat2000`, `dutomron`, `
 
 All results are then stored under the folder `results/`, which contains the training history and model checkpoints. This allows to continue training or perform inference on test instances, as described in the next section.
 
+## Cloud Training (Vertex AI)
+
+The model supports training on Google Cloud Vertex AI with GPU or TPU accelerators.
+
+### Prerequisites
+
+1. Install [Google Cloud CLI](https://cloud.google.com/sdk/docs/install)
+2. Set up your project: `gcloud config set project YOUR_PROJECT_ID`
+3. Create Artifact Registry repository:
+   ```bash
+   gcloud artifacts repositories create saliency \
+       --repository-format=docker \
+       --location=us-central1
+   ```
+
+### Environment Variables
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `GCS_OUTPUT_PATH` | GCS path for model artifacts | `gs://hmm-ml-models/fixation/salicon/` |
+| `GOOGLE_CLOUD_PROJECT` | GCP project ID | `my-project-123` |
+
+### GPU Training
+
+```bash
+# Build and push container
+just build-container
+
+# Train SALICON model on GPU
+just train-vertex-salicon
+
+# Fine-tune on fixationadd1000
+just train-vertex-fixationadd1000
+```
+
+### TPU Training
+
+TPU v5e offers best price-performance for TensorFlow training (~$1.20/chip/hour).
+
+```bash
+# Build and push TPU container
+just build-container-tpu
+
+# Train SALICON on TPU v5e
+just train-vertex-salicon-tpu
+```
+
+**Note:** TPU training uses `channels_last` data format. Set `device: "tpu"` in `config.py` or the container will auto-detect.
+
+### Model Registry
+
+After training, upload your model to Vertex AI Model Registry:
+
+```bash
+# Upload SALICON model
+just upload-model salicon gpu
+
+# List registered models
+just list-models
+```
+
 ## Testing
 
 To test a pre-trained model on image data and produce saliency maps, execute the following command:
