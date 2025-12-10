@@ -436,6 +436,54 @@ class FIWI:
         return (train_set, valid_set)
 
 
+class FIXATIONADD1000:
+    """This class represents the fixation_add1000 dataset for fine-tuning.
+       It consists of 1000 images with corresponding fixation maps.
+
+    Attributes:
+        n_train: Assigned number of training instances (800).
+        n_valid: Assigned number of validation instances (200).
+
+    Returns:
+        tuple: A tuple that consists of dataset objects holding the training
+               and validation set instances respectively.
+    """
+
+    n_train = 800
+    n_valid = 200
+
+    def __init__(self, data_path):
+        self._target_size = config.DIMS["image_size_fixationadd1000"]
+
+        self._dir_stimuli = data_path + "stimuli"
+        self._dir_saliency = data_path + "saliency"
+
+    def load_data(self):
+        list_x = _get_file_list(self._dir_stimuli)
+        list_y = _get_file_list(self._dir_saliency)
+
+        _check_consistency(zip(list_x, list_y), 1000)
+
+        indices = _get_random_indices(1000)
+        excerpt = indices[:self.n_train]
+
+        train_list_x = [list_x[idx] for idx in excerpt]
+        train_list_y = [list_y[idx] for idx in excerpt]
+
+        train_set = _fetch_dataset((train_list_x, train_list_y),
+                                   self._target_size, True)
+
+        excerpt = indices[self.n_train:]
+
+        valid_list_x = [list_x[idx] for idx in excerpt]
+        valid_list_y = [list_y[idx] for idx in excerpt]
+
+        valid_set = _fetch_dataset((valid_list_x, valid_list_y),
+                                   self._target_size, False)
+
+        return (train_set, valid_set)
+
+
 class TEST:
     """This class represents test set instances used for inference through
        a trained network. All stimuli are resized to the preferred spatial
@@ -672,10 +720,10 @@ def _pad_image(image, target_size):
     pad_vertical = tf.cast(target_size[0] - current_size[0], tf.float32) / 2
     pad_horizontal = tf.cast(target_size[1] - current_size[1], tf.float32) / 2
 
-    pad_top = tf.cast(tf.floor(pad_vertical), tf.int32)
-    pad_bottom = tf.cast(tf.ceil(pad_vertical), tf.int32)
-    pad_left = tf.cast(tf.floor(pad_horizontal), tf.int32)
-    pad_right = tf.cast(tf.ceil(pad_horizontal), tf.int32)
+    pad_top = tf.cast(tf.math.floor(pad_vertical), tf.int32)
+    pad_bottom = tf.cast(tf.math.ceil(pad_vertical), tf.int32)
+    pad_left = tf.cast(tf.math.floor(pad_horizontal), tf.int32)
+    pad_right = tf.cast(tf.math.ceil(pad_horizontal), tf.int32)
 
     padding = [[pad_top, pad_bottom], [pad_left, pad_right], [0, 0]]
     image = tf.pad(image, padding, constant_values=pad_constant_value)
@@ -703,8 +751,8 @@ def _crop_image(image, target_size):
     crop_vertical = tf.cast(current_size[0] - target_size[0], tf.float32) / 2
     crop_horizontal = tf.cast(current_size[1] - target_size[1], tf.float32) / 2
 
-    crop_top = tf.cast(tf.floor(crop_vertical), tf.int32)
-    crop_left = tf.cast(tf.floor(crop_horizontal), tf.int32)
+    crop_top = tf.cast(tf.math.floor(crop_vertical), tf.int32)
+    crop_left = tf.cast(tf.math.floor(crop_horizontal), tf.int32)
 
     border_bottom = crop_top + target_size[0]
     border_right = crop_left + target_size[1]

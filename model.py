@@ -56,91 +56,91 @@ class MSINET(tf.keras.Model):
         # Encoder layers (VGG16-based)
         self.conv1_1 = tf.keras.layers.Conv2D(
             64, 3, padding="same", activation="relu",
-            data_format=self._data_format, name="conv1/conv1_1")
+            data_format=self._data_format, name="conv1_conv1_1")
         self.conv1_2 = tf.keras.layers.Conv2D(
             64, 3, padding="same", activation="relu",
-            data_format=self._data_format, name="conv1/conv1_2")
+            data_format=self._data_format, name="conv1_conv1_2")
         self.pool1 = tf.keras.layers.MaxPooling2D(
             2, 2, data_format=self._data_format)
 
         self.conv2_1 = tf.keras.layers.Conv2D(
             128, 3, padding="same", activation="relu",
-            data_format=self._data_format, name="conv2/conv2_1")
+            data_format=self._data_format, name="conv2_conv2_1")
         self.conv2_2 = tf.keras.layers.Conv2D(
             128, 3, padding="same", activation="relu",
-            data_format=self._data_format, name="conv2/conv2_2")
+            data_format=self._data_format, name="conv2_conv2_2")
         self.pool2 = tf.keras.layers.MaxPooling2D(
             2, 2, data_format=self._data_format)
 
         self.conv3_1 = tf.keras.layers.Conv2D(
             256, 3, padding="same", activation="relu",
-            data_format=self._data_format, name="conv3/conv3_1")
+            data_format=self._data_format, name="conv3_conv3_1")
         self.conv3_2 = tf.keras.layers.Conv2D(
             256, 3, padding="same", activation="relu",
-            data_format=self._data_format, name="conv3/conv3_2")
+            data_format=self._data_format, name="conv3_conv3_2")
         self.conv3_3 = tf.keras.layers.Conv2D(
             256, 3, padding="same", activation="relu",
-            data_format=self._data_format, name="conv3/conv3_3")
+            data_format=self._data_format, name="conv3_conv3_3")
         self.pool3 = tf.keras.layers.MaxPooling2D(
             2, 2, data_format=self._data_format)
 
         self.conv4_1 = tf.keras.layers.Conv2D(
             512, 3, padding="same", activation="relu",
-            data_format=self._data_format, name="conv4/conv4_1")
+            data_format=self._data_format, name="conv4_conv4_1")
         self.conv4_2 = tf.keras.layers.Conv2D(
             512, 3, padding="same", activation="relu",
-            data_format=self._data_format, name="conv4/conv4_2")
+            data_format=self._data_format, name="conv4_conv4_2")
         self.conv4_3 = tf.keras.layers.Conv2D(
             512, 3, padding="same", activation="relu",
-            data_format=self._data_format, name="conv4/conv4_3")
+            data_format=self._data_format, name="conv4_conv4_3")
         self.pool4 = tf.keras.layers.MaxPooling2D(
             2, 1, padding="same", data_format=self._data_format)
 
         self.conv5_1 = tf.keras.layers.Conv2D(
             512, 3, padding="same", activation="relu", dilation_rate=2,
-            data_format=self._data_format, name="conv5/conv5_1")
+            data_format=self._data_format, name="conv5_conv5_1")
         self.conv5_2 = tf.keras.layers.Conv2D(
             512, 3, padding="same", activation="relu", dilation_rate=2,
-            data_format=self._data_format, name="conv5/conv5_2")
+            data_format=self._data_format, name="conv5_conv5_2")
         self.conv5_3 = tf.keras.layers.Conv2D(
             512, 3, padding="same", activation="relu", dilation_rate=2,
-            data_format=self._data_format, name="conv5/conv5_3")
+            data_format=self._data_format, name="conv5_conv5_3")
         self.pool5 = tf.keras.layers.MaxPooling2D(
             2, 1, padding="same", data_format=self._data_format)
 
         # ASPP layers
         self.aspp_conv1 = tf.keras.layers.Conv2D(
             256, 1, padding="same", activation="relu",
-            data_format=self._data_format, name="aspp/conv1_1")
+            data_format=self._data_format, name="aspp_conv1_1")
         self.aspp_conv2 = tf.keras.layers.Conv2D(
             256, 3, padding="same", activation="relu", dilation_rate=4,
-            data_format=self._data_format, name="aspp/conv1_2")
+            data_format=self._data_format, name="aspp_conv1_2")
         self.aspp_conv3 = tf.keras.layers.Conv2D(
             256, 3, padding="same", activation="relu", dilation_rate=8,
-            data_format=self._data_format, name="aspp/conv1_3")
+            data_format=self._data_format, name="aspp_conv1_3")
         self.aspp_conv4 = tf.keras.layers.Conv2D(
             256, 3, padding="same", activation="relu", dilation_rate=12,
-            data_format=self._data_format, name="aspp/conv1_4")
+            data_format=self._data_format, name="aspp_conv1_4")
         self.aspp_conv5 = tf.keras.layers.Conv2D(
             256, 1, padding="valid", activation="relu",
-            data_format=self._data_format, name="aspp/conv1_5")
+            data_format=self._data_format, name="aspp_conv1_5")
         self.aspp_conv_out = tf.keras.layers.Conv2D(
             256, 1, padding="same", activation="relu",
-            data_format=self._data_format, name="aspp/conv2")
+            data_format=self._data_format, name="aspp_conv2")
 
         # Decoder layers
         self.decoder_conv1 = tf.keras.layers.Conv2D(
             128, 3, padding="same", activation="relu",
-            data_format=self._data_format, name="decoder/conv1")
+            data_format=self._data_format, name="decoder_conv1")
         self.decoder_conv2 = tf.keras.layers.Conv2D(
             64, 3, padding="same", activation="relu",
-            data_format=self._data_format, name="decoder/conv2")
+            data_format=self._data_format, name="decoder_conv2")
         self.decoder_conv3 = tf.keras.layers.Conv2D(
             32, 3, padding="same", activation="relu",
-            data_format=self._data_format, name="decoder/conv3")
+            data_format=self._data_format, name="decoder_conv3")
         self.decoder_conv4 = tf.keras.layers.Conv2D(
             1, 3, padding="same",
-            data_format=self._data_format, name="decoder/conv4")
+            data_format=self._data_format, name="decoder_conv4")
 
     def _upsample(self, stack, target_shape, factor):
         """This function resizes the input to a desired shape via the
@@ -313,7 +313,7 @@ class MSINET(tf.keras.Model):
             self.load_weights(paths["latest"] + model_name + weights_ext)
             print(">> Restored weights from latest checkpoint")
         elif dataset in ("mit1003", "cat2000", "dutomron",
-                         "pascals", "osie", "fiwi"):
+                         "pascals", "osie", "fiwi", "fixationadd1000"):
             if os.path.isfile(paths["best"] + salicon_name + weights_ext):
                 self.load_weights(paths["best"] + salicon_name + weights_ext)
                 print(">> Restored weights from SALICON checkpoint")
@@ -340,19 +340,19 @@ class MSINET(tf.keras.Model):
 
         # Map our layer names to VGG16 layer names
         vgg16_layer_mapping = {
-            "conv1/conv1_1": "block1_conv1",
-            "conv1/conv1_2": "block1_conv2",
-            "conv2/conv2_1": "block2_conv1",
-            "conv2/conv2_2": "block2_conv2",
-            "conv3/conv3_1": "block3_conv1",
-            "conv3/conv3_2": "block3_conv2",
-            "conv3/conv3_3": "block3_conv3",
-            "conv4/conv4_1": "block4_conv1",
-            "conv4/conv4_2": "block4_conv2",
-            "conv4/conv4_3": "block4_conv3",
-            "conv5/conv5_1": "block5_conv1",
-            "conv5/conv5_2": "block5_conv2",
-            "conv5/conv5_3": "block5_conv3",
+            "conv1_conv1_1": "block1_conv1",
+            "conv1_conv1_2": "block1_conv2",
+            "conv2_conv2_1": "block2_conv1",
+            "conv2_conv2_2": "block2_conv2",
+            "conv3_conv3_1": "block3_conv1",
+            "conv3_conv3_2": "block3_conv2",
+            "conv3_conv3_3": "block3_conv3",
+            "conv4_conv4_1": "block4_conv1",
+            "conv4_conv4_2": "block4_conv2",
+            "conv4_conv4_3": "block4_conv3",
+            "conv5_conv5_1": "block5_conv1",
+            "conv5_conv5_2": "block5_conv2",
+            "conv5_conv5_3": "block5_conv3",
         }
 
         # Load VGG16 model to get weights

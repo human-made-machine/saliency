@@ -41,15 +41,15 @@ dev = [
     "pytest>=7.0.0",
 ]
 
-[project.scripts]
-saliency = "main:main"
-
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-[tool.uv]
-dev-dependencies = [
+[tool.hatch.build.targets.wheel]
+packages = ["."]
+
+[dependency-groups]
+dev = [
     "ruff>=0.1.0",
     "pytest>=7.0.0",
 ]

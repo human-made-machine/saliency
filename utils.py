@@ -113,16 +113,26 @@ class Progbar:
         self._valid_time = 0
 
         self._start_time = time.time()
+        self._training_start_time = time.time()
 
         self._batch_size = batch_size
 
         self._n_train_data = n_train_data
         self._n_train_batches = n_train_batches
 
+        self._n_epochs = n_epochs
+        self._prior_epochs = prior_epochs
+        self._completed_epochs = 0
+        self._epoch_times = []
+
         self._target_epoch = str(n_epochs + prior_epochs).zfill(2)
         self._current_epoch = str(prior_epochs + 1).zfill(2)
 
     def _flush(self):
+        epoch_total_time = self._train_time + self._valid_time
+        self._epoch_times.append(epoch_total_time)
+        self._completed_epochs += 1
+
         self._train_time = 0
         self._valid_time = 0
 
@@ -131,14 +141,52 @@ class Progbar:
         current_epoch_int = int(self._current_epoch) + 1
         self._current_epoch = str(current_epoch_int).zfill(2)
 
+    def _format_time(self, seconds):
+        """Format seconds into a human-readable string."""
+        if seconds < 60:
+            return "%ds" % seconds
+        elif seconds < 3600:
+            minutes = seconds // 60
+            secs = seconds % 60
+            return "%dm %ds" % (minutes, secs)
+        else:
+            hours = seconds // 3600
+            minutes = (seconds % 3600) // 60
+            return "%dh %dm" % (hours, minutes)
+
+    def _estimate_total_remaining(self, current_batch):
+        """Estimate remaining time for entire training run."""
+        epochs_remaining = self._n_epochs - self._completed_epochs - 1
+
+        if self._epoch_times:
+            avg_epoch_time = np.mean(self._epoch_times)
+        else:
+            if current_batch > 0:
+                batch_time = self._train_time / current_batch
+                avg_epoch_time = batch_time * self._n_train_batches * 1.1
+            else:
+                return None
+
+        batch_train_time = self._train_time / max(current_batch, 1)
+        current_epoch_remaining = (self._n_train_batches - current_batch) * batch_train_time
+
+        total_remaining = current_epoch_remaining + (epochs_remaining * avg_epoch_time)
+        return total_remaining
+
     def update_train_step(self, current_batch):
         current_batch += 1
 
         self._train_time = time.time() - self._start_time
         batch_train_time = self._train_time / current_batch
 
-        eta = (self._n_train_batches - current_batch) * batch_train_time
-        eta = str(timedelta(seconds=np.ceil(eta)))
+        eta_epoch = (self._n_train_batches - current_batch) * batch_train_time
+        eta_epoch_str = self._format_time(int(np.ceil(eta_epoch)))
+
+        eta_total = self._estimate_total_remaining(current_batch)
+        if eta_total is not None:
+            eta_total_str = self._format_time(int(np.ceil(eta_total)))
+        else:
+            eta_total_str = "..."
 
         progress_line = "=" * (20 * current_batch // self._n_train_batches)
 
@@ -148,9 +196,9 @@ class Progbar:
         progress_frac = "%i/%i" % (current_instance, self._n_train_data)
 
         information = (self._current_epoch, self._target_epoch,
-                       progress_line, progress_frac, eta)
+                       progress_line, progress_frac, eta_epoch_str, eta_total_str)
 
-        progbar_output = "Epoch %s/%s [%-20s] %s (ETA: %s)" % information
+        progbar_output = "Epoch %s/%s [%-20s] %s (ETA: %s | Total: %s)" % information
 
         print(progbar_output, end="\r", flush=True)
 
@@ -161,6 +209,23 @@ class Progbar:
         train_time = str(timedelta(seconds=np.ceil(self._train_time)))
         valid_time = str(timedelta(seconds=np.ceil(self._valid_time)))
 
+        total_elapsed = time.time() - self._training_start_time
+        total_elapsed_str = self._format_time(int(np.ceil(total_elapsed)))
+
+        epochs_remaining = self._n_epochs - self._completed_epochs - 1
+        epoch_time = self._train_time + self._valid_time
+
+        if epochs_remaining > 0:
+            if self._epoch_times:
+                avg_epoch = np.mean(self._epoch_times + [epoch_time])
+            else:
+                avg_epoch = epoch_time
+            eta_remaining = epochs_remaining * avg_epoch
+            eta_str = self._format_time(int(np.ceil(eta_remaining)))
+            progress_info = "Elapsed: %s | Remaining: %s" % (total_elapsed_str, eta_str)
+        else:
+            progress_info = "Total time: %s" % total_elapsed_str
+
         train_information = (mean_train_loss, train_time)
         valid_information = (mean_valid_loss, valid_time)
 
@@ -169,5 +234,6 @@ class Progbar:
 
         print(train_output, flush=True)
         print(valid_output, flush=True)
+        print("\t%s" % progress_info, flush=True)
 
         self._flush()

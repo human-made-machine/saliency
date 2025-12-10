@@ -27,5 +27,6 @@ DIMS = {
     "image_size_dutomron": (360, 360),
     "image_size_pascals": (360, 360),
     "image_size_osie": (240, 320),
-    "image_size_fiwi": (216, 384)
+    "image_size_fiwi": (216, 384),
+    "image_size_fixationadd1000": (360, 360)
 }
