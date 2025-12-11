@@ -1,275 +1,155 @@
 import os
 
 import tensorflow as tf
-from tensorflow.python.tools import freeze_graph
-from tensorflow.tools.graph_transforms import TransformGraph
 
 import config
 import download
-import loss
 
 
-class MSINET:
-    """The class representing the MSI-Net based on the VGG16 model. It
-       implements a definition of the computational graph, as well as
-       functions related to network training.
+def kld_loss(y_true, y_pred, eps=1e-7):
+    """This function computes the Kullback-Leibler divergence between ground
+       truth saliency maps and their predictions. Values are first divided by
+       their sum for each image to yield a distribution that adds to 1.
+
+    Args:
+        y_true (tensor, float32): A 4d tensor that holds the ground truth
+                                  saliency maps with values between 0 and 255.
+        y_pred (tensor, float32): A 4d tensor that holds the predicted saliency
+                                  maps with values between 0 and 1.
+        eps (scalar, float, optional): A small factor to avoid numerical
+                                       instabilities. Defaults to 1e-7.
+
+    Returns:
+        tensor, float32: A 0D tensor that holds the averaged error.
     """
 
-    def __init__(self):
-        self._output = None
-        self._mapping = {}
+    sum_per_image = tf.reduce_sum(y_true, axis=(1, 2, 3), keepdims=True)
+    y_true = y_true / (eps + sum_per_image)
+
+    sum_per_image = tf.reduce_sum(y_pred, axis=(1, 2, 3), keepdims=True)
+    y_pred = y_pred / (eps + sum_per_image)
+
+    loss = y_true * tf.math.log(eps + y_true / (eps + y_pred))
+    loss = tf.reduce_mean(tf.reduce_sum(loss, axis=(1, 2, 3)))
+
+    return loss
+
+
+class MSINET(tf.keras.Model):
+    """The class representing the MSI-Net based on the VGG16 model. It
+       implements a definition of the computational graph using Keras layers,
+       as well as functions related to network training and inference.
+    """
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
 
         if config.PARAMS["device"] == "gpu":
             self._data_format = "channels_first"
             self._channel_axis = 1
             self._dims_axis = (2, 3)
-        elif config.PARAMS["device"] == "cpu":
+        elif config.PARAMS["device"] in ("cpu", "tpu"):
+            # TPU requires channels_last format (same as CPU)
             self._data_format = "channels_last"
             self._channel_axis = 3
             self._dims_axis = (1, 2)
 
-    def _encoder(self, images):
-        """The encoder of the model consists of a pretrained VGG16 architecture
-           with 13 convolutional layers. All dense layers are discarded and the
-           last 3 layers are dilated at a rate of 2 to account for the omitted
-           downsampling. Finally, the activations from 3 layers are combined.
+        # Encoder layers (VGG16-based)
+        self.conv1_1 = tf.keras.layers.Conv2D(
+            64, 3, padding="same", activation="relu",
+            data_format=self._data_format, name="conv1_conv1_1")
+        self.conv1_2 = tf.keras.layers.Conv2D(
+            64, 3, padding="same", activation="relu",
+            data_format=self._data_format, name="conv1_conv1_2")
+        self.pool1 = tf.keras.layers.MaxPooling2D(
+            2, 2, data_format=self._data_format)
 
-        Args:
-            images (tensor, float32): A 4D tensor that holds the RGB image
-                                      batches used as input to the network.
-        """
+        self.conv2_1 = tf.keras.layers.Conv2D(
+            128, 3, padding="same", activation="relu",
+            data_format=self._data_format, name="conv2_conv2_1")
+        self.conv2_2 = tf.keras.layers.Conv2D(
+            128, 3, padding="same", activation="relu",
+            data_format=self._data_format, name="conv2_conv2_2")
+        self.pool2 = tf.keras.layers.MaxPooling2D(
+            2, 2, data_format=self._data_format)
 
-        imagenet_mean = tf.constant([103.939, 116.779, 123.68])
-        imagenet_mean = tf.reshape(imagenet_mean, [1, 1, 1, 3])
+        self.conv3_1 = tf.keras.layers.Conv2D(
+            256, 3, padding="same", activation="relu",
+            data_format=self._data_format, name="conv3_conv3_1")
+        self.conv3_2 = tf.keras.layers.Conv2D(
+            256, 3, padding="same", activation="relu",
+            data_format=self._data_format, name="conv3_conv3_2")
+        self.conv3_3 = tf.keras.layers.Conv2D(
+            256, 3, padding="same", activation="relu",
+            data_format=self._data_format, name="conv3_conv3_3")
+        self.pool3 = tf.keras.layers.MaxPooling2D(
+            2, 2, data_format=self._data_format)
 
-        images -= imagenet_mean
+        self.conv4_1 = tf.keras.layers.Conv2D(
+            512, 3, padding="same", activation="relu",
+            data_format=self._data_format, name="conv4_conv4_1")
+        self.conv4_2 = tf.keras.layers.Conv2D(
+            512, 3, padding="same", activation="relu",
+            data_format=self._data_format, name="conv4_conv4_2")
+        self.conv4_3 = tf.keras.layers.Conv2D(
+            512, 3, padding="same", activation="relu",
+            data_format=self._data_format, name="conv4_conv4_3")
+        self.pool4 = tf.keras.layers.MaxPooling2D(
+            2, 1, padding="same", data_format=self._data_format)
 
-        if self._data_format == "channels_first":
-            images = tf.transpose(images, (0, 3, 1, 2))
+        self.conv5_1 = tf.keras.layers.Conv2D(
+            512, 3, padding="same", activation="relu", dilation_rate=2,
+            data_format=self._data_format, name="conv5_conv5_1")
+        self.conv5_2 = tf.keras.layers.Conv2D(
+            512, 3, padding="same", activation="relu", dilation_rate=2,
+            data_format=self._data_format, name="conv5_conv5_2")
+        self.conv5_3 = tf.keras.layers.Conv2D(
+            512, 3, padding="same", activation="relu", dilation_rate=2,
+            data_format=self._data_format, name="conv5_conv5_3")
+        self.pool5 = tf.keras.layers.MaxPooling2D(
+            2, 1, padding="same", data_format=self._data_format)
 
-        layer01 = tf.layers.conv2d(images, 64, 3,
-                                   padding="same",
-                                   activation=tf.nn.relu,
-                                   data_format=self._data_format,
-                                   name="conv1/conv1_1")
+        # ASPP layers
+        self.aspp_conv1 = tf.keras.layers.Conv2D(
+            256, 1, padding="same", activation="relu",
+            data_format=self._data_format, name="aspp_conv1_1")
+        self.aspp_conv2 = tf.keras.layers.Conv2D(
+            256, 3, padding="same", activation="relu", dilation_rate=4,
+            data_format=self._data_format, name="aspp_conv1_2")
+        self.aspp_conv3 = tf.keras.layers.Conv2D(
+            256, 3, padding="same", activation="relu", dilation_rate=8,
+            data_format=self._data_format, name="aspp_conv1_3")
+        self.aspp_conv4 = tf.keras.layers.Conv2D(
+            256, 3, padding="same", activation="relu", dilation_rate=12,
+            data_format=self._data_format, name="aspp_conv1_4")
+        self.aspp_conv5 = tf.keras.layers.Conv2D(
+            256, 1, padding="valid", activation="relu",
+            data_format=self._data_format, name="aspp_conv1_5")
+        self.aspp_conv_out = tf.keras.layers.Conv2D(
+            256, 1, padding="same", activation="relu",
+            data_format=self._data_format, name="aspp_conv2")
 
-        layer02 = tf.layers.conv2d(layer01, 64, 3,
-                                   padding="same",
-                                   activation=tf.nn.relu,
-                                   data_format=self._data_format,
-                                   name="conv1/conv1_2")
+        # Decoder layers
+        self.decoder_conv1 = tf.keras.layers.Conv2D(
+            128, 3, padding="same", activation="relu",
+            data_format=self._data_format, name="decoder_conv1")
+        self.decoder_conv2 = tf.keras.layers.Conv2D(
+            64, 3, padding="same", activation="relu",
+            data_format=self._data_format, name="decoder_conv2")
+        self.decoder_conv3 = tf.keras.layers.Conv2D(
+            32, 3, padding="same", activation="relu",
+            data_format=self._data_format, name="decoder_conv3")
+        self.decoder_conv4 = tf.keras.layers.Conv2D(
+            1, 3, padding="same",
+            data_format=self._data_format, name="decoder_conv4")
 
-        layer03 = tf.layers.max_pooling2d(layer02, 2, 2,
-                                          data_format=self._data_format)
-
-        layer04 = tf.layers.conv2d(layer03, 128, 3,
-                                   padding="same",
-                                   activation=tf.nn.relu,
-                                   data_format=self._data_format,
-                                   name="conv2/conv2_1")
-
-        layer05 = tf.layers.conv2d(layer04, 128, 3,
-                                   padding="same",
-                                   activation=tf.nn.relu,
-                                   data_format=self._data_format,
-                                   name="conv2/conv2_2")
-
-        layer06 = tf.layers.max_pooling2d(layer05, 2, 2,
-                                          data_format=self._data_format)
-
-        layer07 = tf.layers.conv2d(layer06, 256, 3,
-                                   padding="same",
-                                   activation=tf.nn.relu,
-                                   data_format=self._data_format,
-                                   name="conv3/conv3_1")
-
-        layer08 = tf.layers.conv2d(layer07, 256, 3,
-                                   padding="same",
-                                   activation=tf.nn.relu,
-                                   data_format=self._data_format,
-                                   name="conv3/conv3_2")
-
-        layer09 = tf.layers.conv2d(layer08, 256, 3,
-                                   padding="same",
-                                   activation=tf.nn.relu,
-                                   data_format=self._data_format,
-                                   name="conv3/conv3_3")
-
-        layer10 = tf.layers.max_pooling2d(layer09, 2, 2,
-                                          data_format=self._data_format)
-
-        layer11 = tf.layers.conv2d(layer10, 512, 3,
-                                   padding="same",
-                                   activation=tf.nn.relu,
-                                   data_format=self._data_format,
-                                   name="conv4/conv4_1")
-
-        layer12 = tf.layers.conv2d(layer11, 512, 3,
-                                   padding="same",
-                                   activation=tf.nn.relu,
-                                   data_format=self._data_format,
-                                   name="conv4/conv4_2")
-
-        layer13 = tf.layers.conv2d(layer12, 512, 3,
-                                   padding="same",
-                                   activation=tf.nn.relu,
-                                   data_format=self._data_format,
-                                   name="conv4/conv4_3")
-
-        layer14 = tf.layers.max_pooling2d(layer13, 2, 1,
-                                          padding="same",
-                                          data_format=self._data_format)
-
-        layer15 = tf.layers.conv2d(layer14, 512, 3,
-                                   padding="same",
-                                   activation=tf.nn.relu,
-                                   dilation_rate=2,
-                                   data_format=self._data_format,
-                                   name="conv5/conv5_1")
-
-        layer16 = tf.layers.conv2d(layer15, 512, 3,
-                                   padding="same",
-                                   activation=tf.nn.relu,
-                                   dilation_rate=2,
-                                   data_format=self._data_format,
-                                   name="conv5/conv5_2")
-
-        layer17 = tf.layers.conv2d(layer16, 512, 3,
-                                   padding="same",
-                                   activation=tf.nn.relu,
-                                   dilation_rate=2,
-                                   data_format=self._data_format,
-                                   name="conv5/conv5_3")
-
-        layer18 = tf.layers.max_pooling2d(layer17, 2, 1,
-                                          padding="same",
-                                          data_format=self._data_format)
-
-        encoder_output = tf.concat([layer10, layer14, layer18],
-                                   axis=self._channel_axis)
-
-        self._output = encoder_output
-
-    def _aspp(self, features):
-        """The ASPP module samples information at multiple spatial scales in
-           parallel via convolutional layers with different dilation factors.
-           The activations are then combined with global scene context and
-           represented as a common tensor.
-
-        Args:
-            features (tensor, float32): A 4D tensor that holds the features
-                                        produced by the encoder module.
-        """
-
-        branch1 = tf.layers.conv2d(features, 256, 1,
-                                   padding="same",
-                                   activation=tf.nn.relu,
-                                   data_format=self._data_format,
-                                   name="aspp/conv1_1")
-
-        branch2 = tf.layers.conv2d(features, 256, 3,
-                                   padding="same",
-                                   activation=tf.nn.relu,
-                                   dilation_rate=4,
-                                   data_format=self._data_format,
-                                   name="aspp/conv1_2")
-
-        branch3 = tf.layers.conv2d(features, 256, 3,
-                                   padding="same",
-                                   activation=tf.nn.relu,
-                                   dilation_rate=8,
-                                   data_format=self._data_format,
-                                   name="aspp/conv1_3")
-
-        branch4 = tf.layers.conv2d(features, 256, 3,
-                                   padding="same",
-                                   activation=tf.nn.relu,
-                                   dilation_rate=12,
-                                   data_format=self._data_format,
-                                   name="aspp/conv1_4")
-
-        branch5 = tf.reduce_mean(features,
-                                 axis=self._dims_axis,
-                                 keepdims=True)
-
-        branch5 = tf.layers.conv2d(branch5, 256, 1,
-                                   padding="valid",
-                                   activation=tf.nn.relu,
-                                   data_format=self._data_format,
-                                   name="aspp/conv1_5")
-
-        shape = tf.shape(features)
-
-        branch5 = self._upsample(branch5, shape, 1)
-
-        context = tf.concat([branch1, branch2, branch3, branch4, branch5],
-                            axis=self._channel_axis)
-
-        aspp_output = tf.layers.conv2d(context, 256, 1,
-                                       padding="same",
-                                       activation=tf.nn.relu,
-                                       data_format=self._data_format,
-                                       name="aspp/conv2")
-        self._output = aspp_output
-
-    def _decoder(self, features):
-        """The decoder model applies a series of 3 upsampling blocks that each
-           performs bilinear upsampling followed by a 3x3 convolution to avoid
-           checkerboard artifacts in the image space. Unlike all other layers,
-           the output of the model is not modified by a ReLU.
-
-        Args:
-            features (tensor, float32): A 4D tensor that holds the features
-                                        produced by the ASPP module.
-        """
-
-        shape = tf.shape(features)
-
-        layer1 = self._upsample(features, shape, 2)
-
-        layer2 = tf.layers.conv2d(layer1, 128, 3,
-                                  padding="same",
-                                  activation=tf.nn.relu,
-                                  data_format=self._data_format,
-                                  name="decoder/conv1")
-
-        shape = tf.shape(layer2)
-
-        layer3 = self._upsample(layer2, shape, 2)
-
-        layer4 = tf.layers.conv2d(layer3, 64, 3,
-                                  padding="same",
-                                  activation=tf.nn.relu,
-                                  data_format=self._data_format,
-                                  name="decoder/conv2")
-
-        shape = tf.shape(layer4)
-
-        layer5 = self._upsample(layer4, shape, 2)
-
-        layer6 = tf.layers.conv2d(layer5, 32, 3,
-                                  padding="same",
-                                  activation=tf.nn.relu,
-                                  data_format=self._data_format,
-                                  name="decoder/conv3")
-
-        decoder_output = tf.layers.conv2d(layer6, 1, 3,
-                                          padding="same",
-                                          data_format=self._data_format,
-                                          name="decoder/conv4")
-
-        if self._data_format == "channels_first":
-            decoder_output = tf.transpose(decoder_output, (0, 2, 3, 1))
-
-        self._output = decoder_output
-
-    def _upsample(self, stack, shape, factor):
+    def _upsample(self, stack, target_shape, factor):
         """This function resizes the input to a desired shape via the
            bilinear upsampling method.
 
         Args:
             stack (tensor, float32): A 4D tensor with the function input.
-            shape (tensor, int32): A 1D tensor with the reference shape.
+            target_shape (tensor, int32): A 1D tensor with the reference shape.
             factor (scalar, int): An integer denoting the upsampling factor.
 
         Returns:
@@ -280,8 +160,9 @@ class MSINET:
         if self._data_format == "channels_first":
             stack = tf.transpose(stack, (0, 2, 3, 1))
 
-        stack = tf.image.resize_bilinear(stack, (shape[self._dims_axis[0]] * factor,
-                                                 shape[self._dims_axis[1]] * factor))
+        new_size = (target_shape[self._dims_axis[0]] * factor,
+                    target_shape[self._dims_axis[1]] * factor)
+        stack = tf.image.resize(stack, new_size, method="bilinear")
 
         if self._data_format == "channels_first":
             stack = tf.transpose(stack, (0, 3, 1, 2))
@@ -296,172 +177,225 @@ class MSINET:
             maps (tensor, float32): A 4D tensor that holds the model output.
             eps (scalar, float, optional): A small factor to avoid numerical
                                            instabilities. Defaults to 1e-7.
+
+        Returns:
+            tensor, float32: Normalized saliency maps.
         """
 
-        min_per_image = tf.reduce_min(maps, axis=(1, 2, 3), keep_dims=True)
-        maps -= min_per_image
+        min_per_image = tf.reduce_min(maps, axis=(1, 2, 3), keepdims=True)
+        maps = maps - min_per_image
 
-        max_per_image = tf.reduce_max(maps, axis=(1, 2, 3), keep_dims=True)
-        maps = tf.divide(maps, eps + max_per_image, name="output")
+        max_per_image = tf.reduce_max(maps, axis=(1, 2, 3), keepdims=True)
+        maps = maps / (eps + max_per_image)
 
-        self._output = maps
+        return maps
 
-    def _pretraining(self):
-        """The first 26 variables of the model here are based on the VGG16
-           network. Therefore, their names are matched to the ones of the
-           pretrained VGG16 checkpoint for correct initialization.
-        """
-
-        for var in tf.global_variables()[:26]:
-            key = var.name.split("/", 1)[1]
-            key = key.replace("kernel:0", "weights")
-            key = key.replace("bias:0", "biases")
-            self._mapping[key] = var
-
-    def forward(self, images):
-        """Public method to forward RGB images through the whole network
-           architecture and retrieve the resulting output.
+    def call(self, images, training=False):
+        """Forward pass through the network.
 
         Args:
             images (tensor, float32): A 4D tensor that holds the values of the
                                       raw input images.
+            training (bool): Whether in training mode.
 
         Returns:
             tensor, float32: A 4D tensor that holds the values of the
                              predicted saliency maps.
         """
 
-        self._encoder(images)
-        self._aspp(self._output)
-        self._decoder(self._output)
-        self._normalize(self._output)
+        # Preprocess: subtract ImageNet mean
+        imagenet_mean = tf.constant([103.939, 116.779, 123.68])
+        imagenet_mean = tf.reshape(imagenet_mean, [1, 1, 1, 3])
+        x = images - imagenet_mean
 
-        return self._output
+        if self._data_format == "channels_first":
+            x = tf.transpose(x, (0, 3, 1, 2))
 
-    def train(self, ground_truth, predicted_maps, learning_rate):
-        """Public method to define the loss function and optimization
-           algorithm for training the model.
+        # Encoder
+        x = self.conv1_1(x)
+        x = self.conv1_2(x)
+        x = self.pool1(x)
+
+        x = self.conv2_1(x)
+        x = self.conv2_2(x)
+        x = self.pool2(x)
+
+        x = self.conv3_1(x)
+        x = self.conv3_2(x)
+        x = self.conv3_3(x)
+        layer10 = self.pool3(x)
+
+        x = self.conv4_1(layer10)
+        x = self.conv4_2(x)
+        x = self.conv4_3(x)
+        layer14 = self.pool4(x)
+
+        x = self.conv5_1(layer14)
+        x = self.conv5_2(x)
+        x = self.conv5_3(x)
+        layer18 = self.pool5(x)
+
+        encoder_output = tf.concat([layer10, layer14, layer18],
+                                   axis=self._channel_axis)
+
+        # ASPP
+        branch1 = self.aspp_conv1(encoder_output)
+        branch2 = self.aspp_conv2(encoder_output)
+        branch3 = self.aspp_conv3(encoder_output)
+        branch4 = self.aspp_conv4(encoder_output)
+
+        branch5 = tf.reduce_mean(encoder_output,
+                                 axis=self._dims_axis,
+                                 keepdims=True)
+        branch5 = self.aspp_conv5(branch5)
+
+        features_shape = tf.shape(encoder_output)
+        branch5 = self._upsample(branch5, features_shape, 1)
+
+        context = tf.concat([branch1, branch2, branch3, branch4, branch5],
+                            axis=self._channel_axis)
+
+        aspp_output = self.aspp_conv_out(context)
+
+        # Decoder
+        shape = tf.shape(aspp_output)
+        x = self._upsample(aspp_output, shape, 2)
+        x = self.decoder_conv1(x)
+
+        shape = tf.shape(x)
+        x = self._upsample(x, shape, 2)
+        x = self.decoder_conv2(x)
+
+        shape = tf.shape(x)
+        x = self._upsample(x, shape, 2)
+        x = self.decoder_conv3(x)
+
+        decoder_output = self.decoder_conv4(x)
+
+        if self._data_format == "channels_first":
+            decoder_output = tf.transpose(decoder_output, (0, 2, 3, 1))
+
+        # Normalize output
+        output = self._normalize(decoder_output)
+
+        return output
+
+    def save_weights(self, dataset, path, device):
+        """Save model weights to disk or GCS.
 
         Args:
-            ground_truth (tensor, float32): A 4D tensor with the ground truth.
-            predicted_maps (tensor, float32): A 4D tensor with the predictions.
-            learning_rate (scalar, float): Defines the learning rate.
-
-        Returns:
-            object: The optimizer element used to train the model.
-            tensor, float32: A 0D tensor that holds the averaged error.
+            dataset (str): The dataset name.
+            path (str): The path used for saving the model (local or gs://).
+            device (str): Represents either "cpu", "gpu", or "tpu".
         """
 
-        error = loss.kld(ground_truth, predicted_maps)
-        optimizer = tf.train.AdamOptimizer(learning_rate)
-        optimizer = optimizer.minimize(error)
+        tf.io.gfile.makedirs(path)
+        weights_path = path + "model_%s_%s.weights.h5" % (dataset, device)
+        super().save_weights(weights_path)
 
-        return optimizer, error
-
-    def save(self, saver, sess, dataset, path, device):
-        """This saves a model checkpoint to disk and creates
-           the folder if it doesn't exist yet.
-
-        Args:
-            saver (object): An object for saving the model.
-            sess (object): The current TF training session.
-            path (str): The path used for saving the model.
-            device (str): Represents either "cpu" or "gpu".
-        """
-
-        os.makedirs(path, exist_ok=True)
-
-        saver.save(sess, path + "model_%s_%s.ckpt" % (dataset, device),
-                   write_meta_graph=False, write_state=False)
-
-    def restore(self, sess, dataset, paths, device):
+    def restore(self, dataset, paths, device):
         """This function allows continued training from a prior checkpoint and
            training from scratch with the pretrained VGG16 weights. In case the
            desired dataset is not SALICON, a prior checkpoint based on the
            SALICON dataset is required.
 
         Args:
-            sess (object): The current TF training session.
-            dataset ([type]): The dataset used for training.
+            dataset (str): The dataset used for training.
             paths (dict, str): A dictionary with all path elements.
-            device (str): Represents either "cpu" or "gpu".
-
-        Returns:
-            object: A saver object for saving the model.
+            device (str): Represents either "cpu", "gpu", or "tpu".
         """
 
         model_name = "model_%s_%s" % (dataset, device)
         salicon_name = "model_salicon_%s" % device
-        vgg16_name = "vgg16_hybrid"
 
-        ext1 = ".ckpt.data-00000-of-00001"
-        ext2 = ".ckpt.index"
+        weights_ext = ".weights.h5"
 
-        saver = tf.train.Saver()
-
-        if os.path.isfile(paths["latest"] + model_name + ext1) and \
-           os.path.isfile(paths["latest"] + model_name + ext2):
-            saver.restore(sess, paths["latest"] + model_name + ".ckpt")
+        if tf.io.gfile.exists(paths["latest"] + model_name + weights_ext):
+            self.load_weights(paths["latest"] + model_name + weights_ext)
+            print(">> Restored weights from latest checkpoint")
         elif dataset in ("mit1003", "cat2000", "dutomron",
-                         "pascals", "osie", "fiwi"):
-            if os.path.isfile(paths["best"] + salicon_name + ext1) and \
-               os.path.isfile(paths["best"] + salicon_name + ext2):
-                saver.restore(sess, paths["best"] + salicon_name + ".ckpt")
+                         "pascals", "osie", "fiwi", "fixationadd1000"):
+            if tf.io.gfile.exists(paths["best"] + salicon_name + weights_ext):
+                self.load_weights(paths["best"] + salicon_name + weights_ext)
+                print(">> Restored weights from SALICON checkpoint")
             else:
                 raise FileNotFoundError("Train model on SALICON first")
         else:
-            if not (os.path.isfile(paths["weights"] + vgg16_name + ext1) or
-                    os.path.isfile(paths["weights"] + vgg16_name + ext2)):
-                download.download_pretrained_weights(paths["weights"],
-                                                     "vgg16_hybrid")
-            self._pretraining()
+            # Try to load VGG16 pretrained weights
+            vgg16_weights_path = paths["weights"] + "vgg16_weights.h5"
+            if not tf.io.gfile.exists(vgg16_weights_path):
+                download.download_pretrained_weights(paths["weights"], "vgg16_weights")
 
-            loader = tf.train.Saver(self._mapping)
-            loader.restore(sess, paths["weights"] + vgg16_name + ".ckpt")
+            if tf.io.gfile.exists(vgg16_weights_path):
+                self._load_vgg16_weights(vgg16_weights_path)
+                print(">> Loaded VGG16 pretrained weights")
+            else:
+                print(">> Starting with random weights")
 
-        return saver
-
-    def optimize(self, sess, dataset, path, device):
-        """The best performing model is frozen, optimized for inference
-           by removing unneeded training operations, and written to disk.
+    def _load_vgg16_weights(self, weights_path):
+        """Load pretrained VGG16 weights for the encoder layers.
 
         Args:
-            sess (object): The current TF training session.
-            path (str): The path used for saving the model.
-            device (str): Represents either "cpu" or "gpu".
+            weights_path (str): Path to the VGG16 weights file.
+        """
 
-        .. seealso:: https://bit.ly/2VBBdqQ and https://bit.ly/2W7YqBa
+        # Map our layer names to VGG16 layer names
+        vgg16_layer_mapping = {
+            "conv1_conv1_1": "block1_conv1",
+            "conv1_conv1_2": "block1_conv2",
+            "conv2_conv2_1": "block2_conv1",
+            "conv2_conv2_2": "block2_conv2",
+            "conv3_conv3_1": "block3_conv1",
+            "conv3_conv3_2": "block3_conv2",
+            "conv3_conv3_3": "block3_conv3",
+            "conv4_conv4_1": "block4_conv1",
+            "conv4_conv4_2": "block4_conv2",
+            "conv4_conv4_3": "block4_conv3",
+            "conv5_conv5_1": "block5_conv1",
+            "conv5_conv5_2": "block5_conv2",
+            "conv5_conv5_3": "block5_conv3",
+        }
+
+        # Load VGG16 model to get weights
+        vgg16 = tf.keras.applications.VGG16(weights="imagenet", include_top=False)
+
+        for our_name, vgg_name in vgg16_layer_mapping.items():
+            our_layer = None
+            for layer in self.layers:
+                if layer.name == our_name:
+                    our_layer = layer
+                    break
+
+            if our_layer is not None:
+                vgg_layer = vgg16.get_layer(vgg_name)
+                our_layer.set_weights(vgg_layer.get_weights())
+
+    def export_saved_model(self, dataset, path, device):
+        """Export the model as a SavedModel for inference.
+
+        Args:
+            dataset (str): The dataset name.
+            path (str): The path used for saving the model (local or gs://).
+            device (str): Represents either "cpu", "gpu", or "tpu".
         """
 
         model_name = "model_%s_%s" % (dataset, device)
         model_path = path + model_name
 
-        tf.train.write_graph(sess.graph.as_graph_def(),
-                             path, model_name + ".pbtxt")
+        tf.io.gfile.makedirs(model_path)
 
-        freeze_graph.freeze_graph(model_path + ".pbtxt", "", False,
-                                  model_path + ".ckpt", "output",
-                                  "save/restore_all", "save/Const:0",
-                                  model_path + ".pb", True, "")
+        # Create a concrete function for serving
+        @tf.function(input_signature=[tf.TensorSpec(shape=[None, None, None, 3],
+                                                     dtype=tf.float32, name="input")])
+        def serving_fn(input_tensor):
+            output = self(input_tensor, training=False)
+            return {"output": output}
 
-        os.remove(model_path + ".pbtxt")
+        # Save the model
+        tf.saved_model.save(
+            self,
+            model_path,
+            signatures={"serving_default": serving_fn}
+        )
 
-        graph_def = tf.GraphDef()
-
-        with tf.gfile.Open(model_path + ".pb", "rb") as file:
-            graph_def.ParseFromString(file.read())
-
-        transforms = ["remove_nodes(op=Identity)",
-                      "merge_duplicate_nodes",
-                      "strip_unused_nodes",
-                      "fold_constants(ignore_errors=true)"]
-
-        optimized_graph_def = TransformGraph(graph_def,
-                                             ["input"],
-                                             ["output"],
-                                             transforms)
-
-        tf.train.write_graph(optimized_graph_def,
-                             logdir=path,
-                             as_text=False,
-                             name=model_name + ".pb")
+        print(">> Exported SavedModel to %s" % model_path)

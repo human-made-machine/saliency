@@ -11,7 +11,7 @@ import model
 import utils
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
-tf.logging.set_verbosity(tf.logging.ERROR)
+tf.get_logger().setLevel("ERROR")
 
 
 def define_paths(current_path, args):
@@ -32,7 +32,13 @@ def define_paths(current_path, args):
     else:
         data_path = os.path.join(args.path, "")
 
-    results_path = current_path + "/results/"
+    # Use GCS output path if set, otherwise use local paths
+    if config.GCS_OUTPUT_PATH:
+        # GCS path format: gs://bucket/path/
+        results_path = config.GCS_OUTPUT_PATH.rstrip("/") + "/"
+    else:
+        results_path = current_path + "/results/"
+
     weights_path = current_path + "/weights/"
 
     history_path = results_path + "history/"
@@ -61,9 +67,9 @@ def define_paths(current_path, args):
 def train_model(dataset, paths, device):
     """The main function for executing network training. It loads the specified
        dataset iterator, saliency model, and helper classes. Training is then
-       performed in a new session by iterating over all batches for a number of
-       epochs. After validation on an independent set, the model is saved and
-       the training history is updated.
+       performed by iterating over all batches for a number of epochs. After
+       validation on an independent set, the model is saved and the training
+       history is updated.
 
     Args:
         dataset (str): Denotes the dataset to be used during training.
@@ -71,21 +77,18 @@ def train_model(dataset, paths, device):
         device (str): Represents either "cpu" or "gpu".
     """
 
-    iterator = data.get_dataset_iterator("train", dataset, paths["data"])
+    train_ds, valid_ds = data.get_dataset_iterator("train", dataset, paths["data"])
 
-    next_element, train_init_op, valid_init_op = iterator
-
-    input_images, ground_truths = next_element[:2]
-
-    input_plhd = tf.placeholder_with_default(input_images,
-                                             (None, None, None, 3),
-                                             name="input")
     msi_net = model.MSINET()
 
-    predicted_maps = msi_net.forward(input_plhd)
+    # Build the model by calling it once
+    dummy_input = tf.zeros((1, 240, 320, 3))
+    msi_net(dummy_input)
 
-    optimizer, loss = msi_net.train(ground_truths, predicted_maps,
-                                    config.PARAMS["learning_rate"])
+    optimizer = tf.keras.optimizers.Adam(learning_rate=config.PARAMS["learning_rate"])
+
+    # Restore weights if available
+    msi_net.restore(dataset, paths, device)
 
     n_train_data = getattr(data, dataset.upper()).n_train
     n_valid_data = getattr(data, dataset.upper()).n_valid
@@ -105,41 +108,41 @@ def train_model(dataset, paths, device):
                             config.PARAMS["n_epochs"],
                             history.prior_epochs)
 
-    with tf.Session() as sess:
-        sess.run(tf.global_variables_initializer())
-        saver = msi_net.restore(sess, dataset, paths, device)
+    print(">> Start training on %s..." % dataset.upper())
 
-        print(">> Start training on %s..." % dataset.upper())
+    for epoch in range(config.PARAMS["n_epochs"]):
+        # Training loop
+        for batch, (input_images, ground_truths, _, _) in enumerate(train_ds):
+            with tf.GradientTape() as tape:
+                predicted_maps = msi_net(input_images, training=True)
+                error = model.kld_loss(ground_truths, predicted_maps)
 
-        for epoch in range(config.PARAMS["n_epochs"]):
-            sess.run(train_init_op)
+            gradients = tape.gradient(error, msi_net.trainable_variables)
+            optimizer.apply_gradients(zip(gradients, msi_net.trainable_variables))
 
-            for batch in range(n_train_batches):
-                _, error = sess.run([optimizer, loss])
+            history.update_train_step(error.numpy())
+            progbar.update_train_step(batch)
 
-                history.update_train_step(error)
-                progbar.update_train_step(batch)
+        # Validation loop
+        for batch, (input_images, ground_truths, _, _) in enumerate(valid_ds):
+            predicted_maps = msi_net(input_images, training=False)
+            error = model.kld_loss(ground_truths, predicted_maps)
 
-            sess.run(valid_init_op)
+            history.update_valid_step(error.numpy())
+            progbar.update_valid_step()
 
-            for batch in range(n_valid_batches):
-                error = sess.run(loss)
+        msi_net.save_weights(dataset, paths["latest"], device)
 
-                history.update_valid_step(error)
-                progbar.update_valid_step()
+        history.save_history()
 
-            msi_net.save(saver, sess, dataset, paths["latest"], device)
+        progbar.write_summary(history.get_mean_train_error(),
+                              history.get_mean_valid_error())
 
-            history.save_history()
+        if history.valid_history[-1] == min(history.valid_history):
+            msi_net.save_weights(dataset, paths["best"], device)
+            msi_net.export_saved_model(dataset, paths["best"], device)
 
-            progbar.write_summary(history.get_mean_train_error(),
-                                  history.get_mean_valid_error())
-
-            if history.valid_history[-1] == min(history.valid_history):
-                msi_net.save(saver, sess, dataset, paths["best"], device)
-                msi_net.optimize(sess, dataset, paths["best"], device)
-
-                print("\tBest model!", flush=True)
+            print("\tBest model!", flush=True)
 
 
 def test_model(dataset, paths, device):
@@ -155,55 +158,53 @@ def test_model(dataset, paths, device):
         device (str): Represents either "cpu" or "gpu".
     """
 
-    iterator = data.get_dataset_iterator("test", dataset, paths["data"])
+    test_ds = data.get_dataset_iterator("test", dataset, paths["data"])
 
-    next_element, init_op = iterator
+    model_name = "model_%s_%s" % (dataset, device)
+    saved_model_path = paths["best"] + model_name
 
-    input_images, original_shape, file_path = next_element
-
-    graph_def = tf.GraphDef()
-
-    model_name = "model_%s_%s.pb" % (dataset, device)
-
-    if os.path.isfile(paths["best"] + model_name):
-        with tf.gfile.Open(paths["best"] + model_name, "rb") as file:
-            graph_def.ParseFromString(file.read())
+    # Try to load SavedModel first, fall back to weights
+    if os.path.isdir(saved_model_path):
+        loaded_model = tf.saved_model.load(saved_model_path)
+        infer = loaded_model.signatures["serving_default"]
+        use_saved_model = True
     else:
-        if not os.path.isfile(paths["weights"] + model_name):
-            download.download_pretrained_weights(paths["weights"],
-                                                 model_name[:-3])
+        # Check for weights
+        weights_path = paths["best"] + model_name + ".weights.h5"
+        if not os.path.isfile(weights_path):
+            weights_path = paths["weights"] + model_name + ".weights.h5"
+            if not os.path.isfile(weights_path):
+                download.download_pretrained_weights(paths["weights"], model_name)
 
-        with tf.gfile.Open(paths["weights"] + model_name, "rb") as file:
-            graph_def.ParseFromString(file.read())
-
-    [predicted_maps] = tf.import_graph_def(graph_def,
-                                           input_map={"input": input_images},
-                                           return_elements=["output:0"])
-
-    jpeg = data.postprocess_saliency_map(predicted_maps[0],
-                                         original_shape[0])
+        msi_net = model.MSINET()
+        # Build model
+        dummy_input = tf.zeros((1, 240, 320, 3))
+        msi_net(dummy_input)
+        msi_net.load_weights(weights_path)
+        use_saved_model = False
 
     print(">> Start testing with %s %s model..." % (dataset.upper(), device))
 
-    with tf.Session() as sess:
-        sess.run(init_op)
+    for input_images, original_shape, file_path in test_ds:
+        if use_saved_model:
+            result = infer(input=input_images)
+            predicted_maps = result["output"]
+        else:
+            predicted_maps = msi_net(input_images, training=False)
 
-        while True:
-            try:
-                output_file, path = sess.run([jpeg, file_path])
-            except tf.errors.OutOfRangeError:
-                break
+        output_file = data.postprocess_saliency_map(predicted_maps[0],
+                                                    original_shape[0])
 
-            path = path[0][0].decode("utf-8")
+        path = file_path[0][0].numpy().decode("utf-8")
 
-            filename = os.path.basename(path)
-            filename = os.path.splitext(filename)[0]
-            filename += ".jpeg"
+        filename = os.path.basename(path)
+        filename = os.path.splitext(filename)[0]
+        filename += ".jpeg"
 
-            os.makedirs(paths["images"], exist_ok=True)
+        os.makedirs(paths["images"], exist_ok=True)
 
-            with open(paths["images"] + filename, "wb") as file:
-                file.write(output_file)
+        with open(paths["images"] + filename, "wb") as file:
+            file.write(output_file.numpy())
 
 
 def main():
@@ -218,7 +219,8 @@ def main():
     phases_list = ["train", "test"]
 
     datasets_list = ["salicon", "mit1003", "cat2000",
-                     "dutomron", "pascals", "osie", "fiwi"]
+                     "dutomron", "pascals", "osie", "fiwi",
+                     "fixationadd1000"]
 
     parser = argparse.ArgumentParser(
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)

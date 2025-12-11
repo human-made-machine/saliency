@@ -1,0 +1,40 @@
+# Dockerfile for Vertex AI TPU training
+# TPU v5e requires TensorFlow 2.15+ with PJRT runtime
+FROM python:3.10-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    wget \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install uv for faster dependency resolution
+RUN pip install uv
+
+# Install TensorFlow TPU wheel and libtpu
+# Note: TPU v5e uses PJRT runtime, TensorFlow 2.15+ includes TPU support
+RUN uv pip install --system tensorflow>=2.15.0
+
+# Install project dependencies
+RUN uv pip install --system gdown>=5.0.0 h5py>=3.10.0 imageio>=2.33.0 \
+    matplotlib>=3.8.0 numpy>=1.26.0 requests>=2.31.0 scipy>=1.11.0
+
+# Download libtpu.so for TPU v5e (PJRT)
+RUN mkdir -p /lib/libtpu && \
+    curl -L https://storage.googleapis.com/cloud-tpu-tpuvm-artifacts/libtpu/1.9.0/libtpu.so \
+    -o /lib/libtpu/libtpu.so
+
+# Copy source code
+COPY *.py ./
+COPY weights/ ./weights/ 2>/dev/null || true
+
+# Set TPU environment variables
+ENV PYTHONUNBUFFERED=1
+ENV PJRT_DEVICE=TPU
+ENV TPU_LIBRARY_PATH=/lib/libtpu/libtpu.so
+
+# Default entrypoint for training
+ENTRYPOINT ["python", "main.py"]
+CMD ["train"]
