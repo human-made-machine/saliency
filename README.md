@@ -129,14 +129,21 @@ just train-vertex-salicon-tpu
 
 The model supports GPU acceleration on Apple Silicon Macs (M1/M2/M3) via tensorflow-metal.
 
+### Requirements
+
+- **Python 3.11** (tensorflow-metal does not officially support Python 3.12+)
+- **TensorFlow ≤2.18.1** (tensorflow-metal has compatibility issues with newer versions)
+- macOS 12.0+ (Monterey or later)
+
 ### Setup
 
 ```bash
+# Create environment with Python 3.11
+uv venv --python 3.11
+source .venv/bin/activate
+
 # Install with Metal support
 uv sync --extra metal
-
-# Or with pip
-pip install tensorflow-metal
 ```
 
 ### Configuration
