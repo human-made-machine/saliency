@@ -48,8 +48,8 @@ class MSINET(tf.keras.Model):
             self._data_format = "channels_first"
             self._channel_axis = 1
             self._dims_axis = (2, 3)
-        elif config.PARAMS["device"] in ("cpu", "tpu"):
-            # TPU requires channels_last format (same as CPU)
+        elif config.PARAMS["device"] in ("cpu", "tpu", "metal"):
+            # TPU and Metal require channels_last format (same as CPU)
             self._data_format = "channels_last"
             self._channel_axis = 3
             self._dims_axis = (1, 2)
@@ -286,7 +286,7 @@ class MSINET(tf.keras.Model):
         Args:
             dataset (str): The dataset name.
             path (str): The path used for saving the model (local or gs://).
-            device (str): Represents either "cpu", "gpu", or "tpu".
+            device (str): Represents "cpu", "gpu", "tpu", or "metal".
         """
 
         tf.io.gfile.makedirs(path)
@@ -302,7 +302,7 @@ class MSINET(tf.keras.Model):
         Args:
             dataset (str): The dataset used for training.
             paths (dict, str): A dictionary with all path elements.
-            device (str): Represents either "cpu", "gpu", or "tpu".
+            device (str): Represents "cpu", "gpu", "tpu", or "metal".
         """
 
         model_name = "model_%s_%s" % (dataset, device)
@@ -376,7 +376,7 @@ class MSINET(tf.keras.Model):
         Args:
             dataset (str): The dataset name.
             path (str): The path used for saving the model (local or gs://).
-            device (str): Represents either "cpu", "gpu", or "tpu".
+            device (str): Represents "cpu", "gpu", "tpu", or "metal".
         """
 
         model_name = "model_%s_%s" % (dataset, device)

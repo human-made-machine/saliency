@@ -14,6 +14,24 @@ os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 tf.get_logger().setLevel("ERROR")
 
 
+def detect_metal_gpu():
+    """Detect and log available Metal GPU devices on macOS.
+
+    Returns:
+        bool: True if Metal GPU is available, False otherwise.
+    """
+    gpus = tf.config.list_physical_devices('GPU')
+    if gpus:
+        print(">> Metal GPU detected: %d device(s) available" % len(gpus))
+        for gpu in gpus:
+            print("   - %s" % gpu.name)
+        return True
+    else:
+        print(">> WARNING: No Metal GPU detected. Training will use CPU.")
+        print("   Ensure tensorflow-metal is installed: pip install tensorflow-metal")
+        return False
+
+
 def define_paths(current_path, args):
     """A helper function to define all relevant path elements for the
        locations of data, weights, and the results from either training
@@ -240,6 +258,10 @@ def main():
     args = parser.parse_args()
 
     paths = define_paths(current_path, args)
+
+    # Detect Metal GPU if device is set to "metal"
+    if config.PARAMS["device"] == "metal":
+        detect_metal_gpu()
 
     if args.phase == "train":
         train_model(args.data, paths, config.PARAMS["device"])

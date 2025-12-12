@@ -32,6 +32,11 @@ For GPU support with CUDA:
 uv sync --extra gpu
 ```
 
+For Apple Silicon (Mac) with Metal GPU:
+```bash
+uv sync --extra metal
+```
+
 ### Running with uv
 
 ```bash
@@ -54,7 +59,14 @@ The results of our paper can be reproduced by first training the MSI-Net via the
 python main.py train
 ```
 
-This will start the training procedure for the SALICON dataset with the hyperparameters defined in `config.py`. If you want to optimize the model for CPU usage, please change the corresponding `device` value in the configurations file. Optionally, the dataset and download path can be specified via command line arguments:
+This will start the training procedure for the SALICON dataset with the hyperparameters defined in `config.py`. The `device` value in `config.py` determines which accelerator to use:
+
+- `"gpu"` - NVIDIA CUDA GPU (default, uses `channels_first` format)
+- `"cpu"` - CPU-only training
+- `"tpu"` - Google Cloud TPU
+- `"metal"` - Apple Silicon GPU via tensorflow-metal
+
+Optionally, the dataset and download path can be specified via command line arguments:
 
 ```
 python main.py train -d DATA -p PATH
@@ -112,6 +124,53 @@ just train-vertex-salicon-tpu
 ```
 
 **Note:** TPU training uses `channels_last` data format. Set `device: "tpu"` in `config.py` or the container will auto-detect.
+
+## Apple Silicon (Mac) Training
+
+The model supports GPU acceleration on Apple Silicon Macs (M1/M2/M3) via tensorflow-metal.
+
+### Setup
+
+```bash
+# Install with Metal support
+uv sync --extra metal
+
+# Or with pip
+pip install tensorflow-metal
+```
+
+### Configuration
+
+Set `device: "metal"` in `config.py`:
+
+```python
+PARAMS = {
+    "n_epochs": 10,
+    "batch_size": 1,
+    "learning_rate": 1e-5,
+    "device": "metal"  # Use Apple Metal GPU
+}
+```
+
+### Training
+
+```bash
+# Train SALICON model with Metal GPU
+just train-salicon-metal
+
+# Fine-tune on fixationadd1000
+just train-fixationadd1000-metal
+```
+
+### Weight Compatibility
+
+Metal training uses `channels_last` data format (same as CPU and TPU). This means:
+
+- ✅ Weights trained with `device: "metal"` are compatible with `device: "cpu"` inference
+- ✅ Weights trained with `device: "metal"` are compatible with `device: "tpu"` inference
+- ❌ Weights trained with `device: "gpu"` (CUDA) are NOT compatible with Metal inference (different data format)
+
+To use Metal-trained weights on Linux for inference, set `device: "cpu"` in `config.py`.
 
 ### Model Registry
 

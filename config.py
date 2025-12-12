@@ -2,12 +2,20 @@
    training epochs, the batch size, and learning rate for the ADAM
    optimization method. To reproduce the results from the paper,
    these values should not be changed. The device can be either
-   "cpu", "gpu", or "tpu", which then optimizes the model accordingly
-   after training or uses the correct version for inference when testing.
+   "cpu", "gpu", "tpu", or "metal", which then optimizes the model
+   accordingly after training or uses the correct version for inference
+   when testing.
 
-   Note: TPU requires channels_last data format (same as CPU). When using
-   TPU on Vertex AI, ensure you use a TPU-compatible container and set
-   the appropriate PJRT runtime environment variables.
+   Device options:
+     - "gpu": NVIDIA CUDA GPU (channels_first format, NCHW)
+     - "cpu": CPU-only training/inference (channels_last format, NHWC)
+     - "tpu": Google Cloud TPU (channels_last format, NHWC)
+     - "metal": Apple Silicon GPU via tensorflow-metal (channels_last, NHWC)
+
+   Note: TPU and Metal require channels_last data format (same as CPU).
+   Weights trained with channels_last (cpu/tpu/metal) are cross-compatible.
+   Weights trained with channels_first (gpu) are NOT compatible with
+   channels_last inference.
 """
 
 PARAMS = {
