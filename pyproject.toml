@@ -36,6 +36,9 @@ dependencies = [
 gpu = [
     "tensorflow[and-cuda]>=2.15.0",
 ]
+metal = [
+    "tensorflow-metal>=1.0.0",  # macOS Apple Silicon only
+]
 dev = [
     "ruff>=0.1.0",
     "pytest>=7.0.0",

@@ -17,6 +17,24 @@ train-fixationadd1000:
 
 train: setup-fixationadd1000 train-salicon train-fixationadd1000
 
+# ============================================================================
+# Apple Silicon (Metal GPU) Training
+# ============================================================================
+
+# Train SALICON on Apple Silicon with Metal GPU
+train-salicon-metal:
+    @echo "Training SALICON with Metal GPU (channels_last format)..."
+    @echo "Ensure device is set to 'metal' in config.py"
+    uv run python main.py train -d salicon
+
+# Fine-tune on fixationadd1000 with Metal GPU
+train-fixationadd1000-metal:
+    @echo "Fine-tuning on fixationadd1000 with Metal GPU..."
+    @echo "Ensure device is set to 'metal' in config.py"
+    uv run python main.py train -d fixationadd1000 -p data/
+
+train-metal: setup-fixationadd1000 train-salicon-metal train-fixationadd1000-metal
+
 # Test model on a dataset
 test dataset path:
     uv run python main.py test -d {{dataset}} -p {{path}}
