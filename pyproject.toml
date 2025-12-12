@@ -37,7 +37,8 @@ gpu = [
     "tensorflow[and-cuda]>=2.15.0",
 ]
 metal = [
-    "tensorflow-metal>=1.0.0",  # macOS Apple Silicon only
+    "tensorflow>=2.15.0,<=2.18.1",  # tensorflow-metal requires <=2.18.1
+    "tensorflow-metal>=1.0.0",  # macOS Apple Silicon only, requires Python <=3.11
 ]
 dev = [
     "ruff>=0.1.0",
